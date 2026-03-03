@@ -55,6 +55,7 @@
 </header>
 
 <div class="wrap">
+  <!-- 左：管理（仅管理员可用） -->
   <section class="panel">
     <h2>添加/管理菜品（仅管理员）</h2>
     <div class="p">
@@ -100,11 +101,12 @@
 
       <div class="muted" style="margin-top:10px;">
         菜单存云端：你改一次，全家所有设备刷新后都是最新。<br/>
-        右侧“今日清单”仍然是每个人自己的。
+        右侧“今日清单”仍然是每个人自己的（只存在本机）。
       </div>
     </div>
   </section>
 
+  <!-- 中：菜单（所有人可看） -->
   <section class="panel">
     <h2>菜单</h2>
     <div class="cats" id="cats"></div>
@@ -114,6 +116,7 @@
     <div class="menu" id="menu"></div>
   </section>
 
+  <!-- 右：今日清单（每设备本地） -->
   <aside class="panel">
     <h2>今日要做/要吃</h2>
     <div class="p">
@@ -140,10 +143,12 @@
 </div>
 
 <script type="module">
+  // ===== Firebase 引入 =====
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-  import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+  import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
+  // ===== 你的 firebaseConfig =====
   const firebaseConfig = {
     apiKey: "AIzaSyBomQvnrGffGpq4xd4rhF7amyiBME0eeMA",
     authDomain: "willa-menu-65de8.firebaseapp.com",
@@ -153,8 +158,10 @@
     appId: "1:521050906505:web:ef2706e06aa50c95284b58"
   };
 
+  // ===== 你的管理员邮箱 =====
   const ADMIN_EMAIL = "yanwu6618@gmail.com";
 
+  // ===== 初始化（只一次）=====
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
@@ -164,8 +171,26 @@
   const $ = (id) => document.getElementById(id);
   const on = (id, evt, fn) => { const el = $(id); if(el) el.addEventListener(evt, fn); };
 
+  // 今日清单：每人本机
   const LS_TODAY = "family_today_v2";
 
+  function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+  function load(key, fallback){
+    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
+    catch { return fallback; }
+  }
+  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, s => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[s]));
+  }
+  function money(n){
+    if (!Number.isFinite(n)) return "¥0";
+    return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
+  }
+
+  // 默认示例菜（云端没初始化时显示）
   const defaultDishes = [
     { id: uid(), name:"番茄炒蛋", cat:"家常菜", price:12, desc:"少油", imgData:null },
     { id: uid(), name:"玉米排骨汤", cat:"汤", price:28, desc:"清淡", imgData:null },
@@ -182,20 +207,16 @@
 
   let isAdmin = false;
 
-  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
-  function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
-  function load(key, fallback){
-    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
-    catch { return fallback; }
-  }
-  function money(n){
-    if (!Number.isFinite(n)) return "¥0";
-    return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
-  }
-  function escapeHtml(str){
-    return String(str).replace(/[&<>"']/g, s => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[s]));
+  function sanitizeDish(d){
+    const price = (typeof d.price === "number" && Number.isFinite(d.price)) ? d.price : null; // ✅ 不允许 NaN
+    return {
+      id: String(d.id || uid()),
+      name: String(d.name || "未命名"),
+      cat: String(d.cat || "未分类"),
+      desc: String(d.desc || ""),
+      price,
+      imgData: d.imgData || null
+    };
   }
 
   function categories(){
@@ -204,20 +225,24 @@
     return ["全部", ...cats];
   }
 
-  function setAdminUI(onFlag){
-    isAdmin = onFlag;
+  function setAdminUI(onAdmin){
+    isAdmin = onAdmin;
 
+    // 管理区禁用/启用
     ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img"].forEach(id=>{
-      const el = $(id); if(el) el.disabled = !onFlag;
+      const el = $(id);
+      if(el) el.disabled = !onAdmin;
     });
 
-    if($("tip")) $("tip").textContent = onFlag
-      ? "管理员模式：可以修改菜单（全家同步）。"
-      : "访客模式：只能查看菜单。";
+    if($("tip")){
+      $("tip").textContent = onAdmin
+        ? "管理员模式：可以修改菜单（全家同步）。"
+        : "访客模式：只能查看菜单。";
+    }
 
-    if($("loginBtn")) $("loginBtn").classList.toggle("hide", onFlag);
-    if($("logoutBtn")) $("logoutBtn").classList.toggle("hide", !onFlag);
-    if($("who")) $("who").textContent = onFlag ? ("管理员：" + ADMIN_EMAIL) : "访客模式";
+    $("loginBtn")?.classList.toggle("hide", onAdmin);
+    $("logoutBtn")?.classList.toggle("hide", !onAdmin);
+    if($("who")) $("who").textContent = onAdmin ? ("管理员：" + ADMIN_EMAIL) : "访客模式";
 
     renderMenu();
   }
@@ -225,10 +250,19 @@
   async function persistCloud(){
     if(!isAdmin){
       if($("tip")) $("tip").textContent = "你不是管理员，无法保存。";
-      return;
+      return false;
     }
-    await setDoc(menuRef, { dishes: state.dishes, updatedAt: serverTimestamp() }, { merge: true });
-    if($("dishCount")) $("dishCount").textContent = "菜品：" + state.dishes.length;
+    try{
+      // ✅ 写入前再清洗一次，确保没有 NaN/undefined
+      const clean = state.dishes.map(sanitizeDish);
+      await setDoc(menuRef, { dishes: clean, updatedAt: serverTimestamp() }, { merge: true });
+      if($("dishCount")) $("dishCount").textContent = "菜品：" + clean.length;
+      return true;
+    } catch(e){
+      console.error(e);
+      if($("tip")) $("tip").textContent = "保存失败：请看 Console 报错（常见原因：图片太大或权限问题）。";
+      return false;
+    }
   }
 
   function renderCats(){
@@ -267,10 +301,10 @@
       card.innerHTML = `
         <div class="img">${hasImg ? `<img alt="" src="${d.imgData}">` : "暂无图片"}</div>
         <div class="c">
-          <div class="name">${escapeHtml(d.name || "未命名")}</div>
+          <div class="name">${escapeHtml(d.name)}</div>
           <div class="meta">
             <span>${escapeHtml(d.cat)}</span>
-            <span>${Number.isFinite(d.price) ? money(d.price) : ""}</span>
+            <span>${(typeof d.price === "number" && Number.isFinite(d.price)) ? money(d.price) : ""}</span>
           </div>
           <div class="muted">${escapeHtml(d.desc || "")}</div>
           <div class="actions" style="margin-top:6px;">
@@ -280,9 +314,12 @@
         </div>
       `;
 
-      const [addBtn, delBtn] = card.querySelectorAll("button");
+      const btns = card.querySelectorAll("button");
+      const addBtn = btns[0];
+      const delBtn = btns[1];
+
       addBtn.onclick = () => addToToday(d.id);
-      delBtn.onclick = () => deleteDish(d.id);
+      if(delBtn) delBtn.onclick = () => deleteDish(d.id);
 
       wrap.appendChild(card);
     });
@@ -313,14 +350,14 @@
     let total = 0;
 
     items.forEach(({dish, qty}) => {
-      if(Number.isFinite(dish.price)) total += dish.price * qty;
+      if(typeof dish.price === "number" && Number.isFinite(dish.price)) total += dish.price * qty;
 
       const row = document.createElement("div");
       row.className = "row";
       row.innerHTML = `
         <div class="meta2">
           <div class="n">${escapeHtml(dish.name)}</div>
-          <div class="muted">${escapeHtml(dish.cat || "未分类")} ${Number.isFinite(dish.price) ? "· "+money(dish.price) : ""}</div>
+          <div class="muted">${escapeHtml(dish.cat || "未分类")} ${(typeof dish.price === "number" && Number.isFinite(dish.price)) ? "· "+money(dish.price) : ""}</div>
         </div>
         <div class="qty">
           <button>-</button>
@@ -358,13 +395,18 @@
     state.dishes = state.dishes.filter(d => d.id !== id);
     state.today.delete(id);
     save(LS_TODAY, Object.fromEntries(state.today));
-    await persistCloud();
+    const ok = await persistCloud();
+    if(!ok) return;
     renderCats(); renderMenu(); renderToday();
     if($("tip")) $("tip").textContent = "已删除菜品（全家同步）。";
   }
 
   function resetForm(){
-    ["name","cat","price","desc","img"].forEach(id => { const el=$(id); if(el) el.value=""; });
+    if($("name")) $("name").value = "";
+    if($("cat")) $("cat").value = "";
+    if($("price")) $("price").value = "";
+    if($("desc")) $("desc").value = "";
+    if($("img")) $("img").value = "";
   }
 
   async function fileToDataUrl(file){
@@ -389,14 +431,22 @@
     const cat = (($("cat")?.value || "").trim() || "未分类");
     const desc = (($("desc")?.value || "").trim());
     const priceRaw = (($("price")?.value || "").trim());
-    const price = priceRaw ? Number(priceRaw) : NaN;
+    const priceNum = priceRaw ? Number(priceRaw) : null;
+
+    // ✅ Firestore 不允许 NaN，所以没填/非法就存 null
+    const price = (typeof priceNum === "number" && Number.isFinite(priceNum)) ? priceNum : null;
 
     const file = $("img")?.files?.[0] || null;
     let imgData = null;
-    if(file) imgData = await fileToDataUrl(file);
+    if(file){
+      imgData = await fileToDataUrl(file); // 如果你之后遇到“图片太大”，我再给你加自动压缩/或改 Storage
+    }
 
-    state.dishes.push({ id: uid(), name, cat, desc, price: Number.isFinite(price) ? price : NaN, imgData });
-    await persistCloud();
+    state.dishes.push(sanitizeDish({ id: uid(), name, cat, desc, price, imgData }));
+
+    const ok = await persistCloud();
+    if(!ok) return;
+
     renderCats(); renderMenu();
     resetForm();
     if($("tip")) $("tip").textContent = "已保存菜品（全家同步）。";
@@ -404,8 +454,9 @@
 
   async function seed(){
     if(!isAdmin) return;
-    state.dishes = [...state.dishes, ...defaultDishes];
-    await persistCloud();
+    state.dishes = [...state.dishes, ...defaultDishes].map(sanitizeDish);
+    const ok = await persistCloud();
+    if(!ok) return;
     renderCats(); renderMenu();
     if($("tip")) $("tip").textContent = "已添加示例菜（全家同步）。";
   }
@@ -413,7 +464,8 @@
   async function wipeAll(){
     if(!isAdmin) return;
     state.dishes = [];
-    await persistCloud();
+    const ok = await persistCloud();
+    if(!ok) return;
     renderCats(); renderMenu(); renderToday();
     if($("tip")) $("tip").textContent = "已清空全部菜品（全家同步）。";
   }
@@ -433,17 +485,21 @@
       return dish ? `${dish.name} × ${qty}` : null;
     }).filter(Boolean);
 
-    const text = ["今日菜单：", ...items.map(x => "• " + x), note ? `备注：${note}` : ""].filter(Boolean).join("\n");
+    const text = [
+      "今日菜单：",
+      ...items.map(x => "• " + x),
+      note ? `备注：${note}` : ""
+    ].filter(Boolean).join("\n");
 
     try{
       await navigator.clipboard.writeText(text);
       if($("todayTip")) $("todayTip").textContent = "已复制到剪贴板。";
     } catch {
-      if($("todayTip")) $("todayTip").textContent = "复制失败（浏览器限制）。";
+      if($("todayTip")) $("todayTip").textContent = "复制失败（浏览器限制）。你可以手动选中复制。";
     }
   }
 
-  // 事件绑定
+  // ===== 事件绑定 =====
   on("addBtn","click", addDish);
   on("resetBtn","click", resetForm);
   on("seedBtn","click", seed);
@@ -451,32 +507,51 @@
   on("clearTodayBtn","click", clearToday);
   on("copyBtn","click", copyToday);
 
-  const searchEl = $("search");
-  if(searchEl){
-    searchEl.addEventListener("input", (e) => { state.search = e.target.value || ""; renderMenu(); });
-  }
-
-  on("loginBtn","click", async () => {
-    try { await signInWithPopup(auth, provider); }
-    catch { if($("tip")) $("tip").textContent = "登录失败：请允许弹窗，或换 Chrome/Safari 再试。"; }
+  $("search")?.addEventListener("input", (e) => {
+    state.search = e.target.value || "";
+    renderMenu();
   });
 
-  on("logoutBtn","click", async () => { await signOut(auth); });
+  // ✅ Redirect 登录（手机最稳）
+  on("loginBtn","click", async () => {
+    try{
+      await signInWithRedirect(auth, provider);
+    } catch (e){
+      console.error(e);
+      if($("tip")) $("tip").textContent = "登录失败：请换 Chrome/Safari 再试。";
+    }
+  });
 
+  on("logoutBtn","click", async () => {
+    await signOut(auth);
+  });
+
+  // 处理 redirect 回跳结果（不需要显示也行）
+  getRedirectResult(auth).catch(() => {});
+
+  // 登录状态 → 判断是否管理员
   onAuthStateChanged(auth, (user) => {
     const ok = !!user && user.email === ADMIN_EMAIL;
     setAdminUI(ok);
   });
 
+  // 云端菜单实时同步
   onSnapshot(menuRef, (snap) => {
     const data = snap.data();
-    state.dishes = (data?.dishes && Array.isArray(data.dishes)) ? data.dishes : defaultDishes;
+    if(data?.dishes && Array.isArray(data.dishes)){
+      state.dishes = data.dishes.map(sanitizeDish);
+    } else {
+      // 云端未初始化时先显示默认示例菜
+      state.dishes = defaultDishes.map(sanitizeDish);
+    }
     if($("dishCount")) $("dishCount").textContent = "菜品：" + state.dishes.length;
     renderCats(); renderMenu(); renderToday();
   });
 
+  // 初始渲染
   renderCats(); renderMenu(); renderToday();
 </script>
 </body>
 </html>
+
 
