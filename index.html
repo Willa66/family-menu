@@ -42,21 +42,18 @@
     .pill{ font-size:12px; padding:4px 8px; border-radius:999px; background:#f1f2f4; }
     .danger{ color:#b42318; }
     .hide{ display:none !important; }
-    .warn{ color:#b42318; font-size:12px; margin-top:8px; }
   </style>
 </head>
 <body>
 <header>
   <h1>🍳 家庭菜单</h1>
   <span class="pill" id="dishCount">菜品：0</span>
-
-  <button class="btn secondary" id="loginBtn">管理员登录</button>
-  <button class="btn secondary hide" id="logoutBtn">退出登录</button>
+  <button class="btn secondary" id="adminBtn">管理员模式</button>
+  <button class="btn secondary hide" id="exitAdminBtn">退出管理员</button>
   <span class="pill" id="who">访客模式</span>
 </header>
 
 <div class="wrap">
-  <!-- 左：管理 -->
   <section class="panel">
     <h2>添加/管理菜品（仅管理员）</h2>
     <div class="p">
@@ -77,7 +74,7 @@
           <input id="price" placeholder="例如：25（不填也行）" inputmode="decimal" />
         </div>
         <div>
-          <label>图片（可选，自动压缩）</label>
+          <label>图片（建议小一点）</label>
           <input id="img" type="file" accept="image/*" />
         </div>
       </div>
@@ -98,17 +95,15 @@
           <button class="btn secondary danger" id="wipeBtn" style="flex:1;">清空全部菜品</button>
         </div>
         <div class="muted" id="tip"></div>
-        <div class="warn" id="err"></div>
       </div>
 
       <div class="muted" style="margin-top:10px;">
         菜单存云端：你改一次，全家所有设备刷新后都是最新。<br/>
-        右侧“今日清单”仍然是每个人自己的（只存在本机）。
+        右侧“今日清单”仍然是每个人自己的。
       </div>
     </div>
   </section>
 
-  <!-- 中：菜单 -->
   <section class="panel">
     <h2>菜单</h2>
     <div class="cats" id="cats"></div>
@@ -118,7 +113,6 @@
     <div class="menu" id="menu"></div>
   </section>
 
-  <!-- 右：今日清单 -->
   <aside class="panel">
     <h2>今日要做/要吃</h2>
     <div class="p">
@@ -144,53 +138,24 @@
   </aside>
 </div>
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
-  import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+<!-- CloudBase Web SDK（不需要安装） -->
+<script src="https://imgcache.qq.com/qcloud/tcbjs/1.10.8/tcb.js"></script>
 
-  // ===== 1) 你的 Firebase 配置 =====
-  const firebaseConfig = {
-    apiKey: "AIzaSyBomQvnrGffGpq4xd4rhF7amyiBME0eeMA",
-    authDomain: "willa-menu-65de8.firebaseapp.com",
-    projectId: "willa-menu-65de8",
-    storageBucket: "willa-menu-65de8.firebasestorage.app",
-    messagingSenderId: "521050906505",
-    appId: "1:521050906505:web:ef2706e06aa50c95284b58"
-  };
+<script>
+  // ===== 你只要改这两项 =====
+  const ENV_ID = "family-menu-8glw5574d2a04448";
+  const ADMIN_PASSWORD = "willa";
+  // =========================
 
-  // ===== 2) 管理员邮箱 =====
-  const ADMIN_EMAIL = "yanwu6618@gmail.com";
-
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const auth = getAuth(app);
-  const provider = new GoogleAuthProvider();
-  const menuRef = doc(db, "menus", "default");
+  const app = tcb.init({ env: ENV_ID });
+  const db = app.database();
+  const menuDoc = db.collection("menus").doc("default");
 
   const $ = (id) => document.getElementById(id);
-  const show = (id, txt) => { const el = $(id); if(el) el.textContent = txt || ""; };
 
-  // 今日清单：每人本机
-  const LS_TODAY = "family_today_v3";
+  const LS_TODAY = "family_today_cloudbase_today_v1";
+  const LS_ADMIN = "family_today_cloudbase_admin_v1";
 
-  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
-  function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
-  function load(key, fallback){
-    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
-    catch { return fallback; }
-  }
-  function escapeHtml(str){
-    return String(str).replace(/[&<>"']/g, s => ({
-      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
-    }[s]));
-  }
-  function money(n){
-    if (!Number.isFinite(n)) return "¥0";
-    return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
-  }
-
-  // ===== 示例菜 =====
   const defaultDishes = [
     { id: uid(), name:"番茄炒蛋", cat:"家常菜", price:12, desc:"少油", imgData:null },
     { id: uid(), name:"玉米排骨汤", cat:"汤", price:28, desc:"清淡", imgData:null },
@@ -205,24 +170,22 @@
     search: ""
   };
 
-  let isAdmin = false;
+  let isAdmin = load(LS_ADMIN, false) === true;
 
-  // ===== 关键：净化数据（永远只返回纯 JSON 可存类型）=====
-  function sanitizeDish(d){
-    const price = (typeof d.price === "number" && Number.isFinite(d.price)) ? d.price : null;
-    return {
-      id: String(d.id || uid()),
-      name: String(d.name || "未命名"),
-      cat: String(d.cat || "未分类"),
-      desc: String(d.desc || ""),
-      price,
-      imgData: (typeof d.imgData === "string" ? d.imgData : null)
-    };
+  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+  function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+  function load(key, fallback){
+    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
+    catch { return fallback; }
   }
-
-  // ===== 关键：再做一次 JSON 强制净化（杀死 undefined/NaN/Infinity/对象等）=====
-  function toPlainJSON(x){
-    return JSON.parse(JSON.stringify(x));
+  function money(n){
+    if (!Number.isFinite(n)) return "¥0";
+    return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
+  }
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, s => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+    }[s]));
   }
 
   function categories(){
@@ -231,46 +194,53 @@
     return ["全部", ...cats];
   }
 
-  function setAdminUI(onAdmin){
-    isAdmin = onAdmin;
+  function setAdminUI(on){
+    isAdmin = on;
+    save(LS_ADMIN, on);
 
-    // 禁用/启用管理区
-    ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img"].forEach(id=>{
-      const el = $(id);
-      if(el) el.disabled = !onAdmin;
+    ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img","resetBtn"].forEach(id=>{
+      $(id).disabled = !on;
     });
 
-    show("tip", onAdmin ? "管理员模式：可以修改菜单（全家同步）。" : "访客模式：只能查看菜单。");
-    show("err", "");
-
-    $("loginBtn")?.classList.toggle("hide", onAdmin);
-    $("logoutBtn")?.classList.toggle("hide", !onAdmin);
-    if($("who")) $("who").textContent = onAdmin ? ("管理员：" + ADMIN_EMAIL) : "访客模式";
+    $("adminBtn").classList.toggle("hide", on);
+    $("exitAdminBtn").classList.toggle("hide", !on);
+    $("who").textContent = on ? "管理员模式" : "访客模式";
+    $("tip").textContent = on ? "管理员：可修改菜单（云端同步）" : "访客：只能查看菜单";
 
     renderMenu();
   }
 
-  async function persistCloud(){
-    if(!isAdmin){
-      show("tip", "你不是管理员，无法保存。");
-      return false;
-    }
-
+  async function cloudLoad(){
     try{
-      const clean = toPlainJSON(state.dishes.map(sanitizeDish)); // ✅ 双保险
-      await setDoc(menuRef, { dishes: clean, updatedAt: serverTimestamp() }, { merge: true });
-      show("dishCount", "菜品：" + clean.length);
-      return true;
-    } catch(e){
-      console.error("Firestore 写入失败：", e);
-      show("err", "保存失败：请看 Console 报错（已打印）");
-      return false;
+      const res = await menuDoc.get();
+      const data = res.data;
+      if(data && Array.isArray(data.dishes)){
+        state.dishes = data.dishes;
+      }else{
+        // 云端未初始化：先用默认菜显示
+        state.dishes = defaultDishes;
+      }
+      $("dishCount").textContent = "菜品：" + state.dishes.length;
+      renderCats(); renderMenu(); renderToday();
+    }catch(e){
+      $("tip").textContent = "云端读取失败：请检查 CloudBase 环境ID/权限。";
+      // fallback
+      state.dishes = defaultDishes;
+      renderCats(); renderMenu(); renderToday();
     }
+  }
+
+  async function cloudSave(){
+    if(!isAdmin){
+      $("tip").textContent = "需要管理员模式才能保存。";
+      return;
+    }
+    await menuDoc.set({ dishes: state.dishes });
+    $("dishCount").textContent = "菜品：" + state.dishes.length;
   }
 
   function renderCats(){
     const wrap = $("cats");
-    if(!wrap) return;
     wrap.innerHTML = "";
     categories().forEach(c => {
       const b = document.createElement("button");
@@ -283,7 +253,6 @@
 
   function renderMenu(){
     const wrap = $("menu");
-    if(!wrap) return;
     wrap.innerHTML = "";
 
     const list = state.dishes
@@ -292,7 +261,7 @@
       .filter(d => (d.name || "").toLowerCase().includes(state.search.toLowerCase().trim()));
 
     if(list.length === 0){
-      wrap.innerHTML = `<div class="muted" style="padding:10px;">暂无菜品。管理员登录后可添加。</div>`;
+      wrap.innerHTML = `<div class="muted" style="padding:10px;">暂无菜品。管理员可添加。</div>`;
       return;
     }
 
@@ -304,10 +273,10 @@
       card.innerHTML = `
         <div class="img">${hasImg ? `<img alt="" src="${d.imgData}">` : "暂无图片"}</div>
         <div class="c">
-          <div class="name">${escapeHtml(d.name)}</div>
+          <div class="name">${escapeHtml(d.name || "未命名")}</div>
           <div class="meta">
             <span>${escapeHtml(d.cat)}</span>
-            <span>${(typeof d.price === "number" && Number.isFinite(d.price)) ? money(d.price) : ""}</span>
+            <span>${Number.isFinite(d.price) ? money(d.price) : ""}</span>
           </div>
           <div class="muted">${escapeHtml(d.desc || "")}</div>
           <div class="actions" style="margin-top:6px;">
@@ -316,22 +285,15 @@
           </div>
         </div>
       `;
-
       const btns = card.querySelectorAll("button");
-      const addBtn = btns[0];
-      const delBtn = btns[1];
-
-      addBtn.onclick = () => addToToday(d.id);
-      if(delBtn) delBtn.onclick = () => deleteDish(d.id);
-
+      btns[0].onclick = () => addToToday(d.id);
+      if(btns[1]) btns[1].onclick = () => deleteDish(d.id);
       wrap.appendChild(card);
     });
   }
 
   function renderToday(){
     const wrap = $("todayList");
-    if(!wrap) return;
-
     const items = [...state.today.entries()]
       .map(([id, qtyStr]) => {
         const qty = Number(qtyStr) || 0;
@@ -343,8 +305,8 @@
     if(items.length === 0){
       wrap.className = "muted";
       wrap.textContent = "还没选菜";
-      show("total", "¥0");
-      show("todayTip", "");
+      $("total").textContent = "¥0";
+      $("todayTip").textContent = "";
       return;
     }
 
@@ -353,14 +315,14 @@
     let total = 0;
 
     items.forEach(({dish, qty}) => {
-      if(typeof dish.price === "number" && Number.isFinite(dish.price)) total += dish.price * qty;
+      if(Number.isFinite(dish.price)) total += dish.price * qty;
 
       const row = document.createElement("div");
       row.className = "row";
       row.innerHTML = `
         <div class="meta2">
           <div class="n">${escapeHtml(dish.name)}</div>
-          <div class="muted">${escapeHtml(dish.cat || "未分类")} ${(typeof dish.price === "number" && Number.isFinite(dish.price)) ? "· "+money(dish.price) : ""}</div>
+          <div class="muted">${escapeHtml(dish.cat || "未分类")} ${Number.isFinite(dish.price) ? "· "+money(dish.price) : ""}</div>
         </div>
         <div class="qty">
           <button>-</button>
@@ -371,12 +333,11 @@
       const [minus, plus] = row.querySelectorAll("button");
       minus.onclick = () => setTodayQty(dish.id, qty - 1);
       plus.onclick  = () => setTodayQty(dish.id, qty + 1);
-
       wrap.appendChild(row);
     });
 
-    show("total", money(total));
-    show("todayTip", "提示：没填价格的菜不会计入总价。");
+    $("total").textContent = money(total);
+    $("todayTip").textContent = "提示：今日清单只保存在本机。";
   }
 
   function addToToday(id){
@@ -396,12 +357,9 @@
   async function deleteDish(id){
     if(!isAdmin) return;
     state.dishes = state.dishes.filter(d => d.id !== id);
-    state.today.delete(id);
-    save(LS_TODAY, Object.fromEntries(state.today));
-    const ok = await persistCloud();
-    if(!ok) return;
+    await cloudSave();
     renderCats(); renderMenu(); renderToday();
-    show("tip", "已删除菜品（全家同步）。");
+    $("tip").textContent = "已删除（云端同步）";
   }
 
   function resetForm(){
@@ -410,117 +368,82 @@
     $("price").value = "";
     $("desc").value = "";
     $("img").value = "";
-    show("err", "");
   }
 
-  // ===== 图片压缩：避免过大，也避免异常类型 =====
-  async function imageFileToCompressedDataURL(file, maxSide = 900, quality = 0.75){
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    try{
-      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
-
-      const w = img.naturalWidth || img.width;
-      const h = img.naturalHeight || img.height;
-      const scale = Math.min(1, maxSide / Math.max(w, h));
-      const cw = Math.max(1, Math.round(w * scale));
-      const ch = Math.max(1, Math.round(h * scale));
-
-      const canvas = document.createElement("canvas");
-      canvas.width = cw;
-      canvas.height = ch;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, cw, ch);
-
-      return canvas.toDataURL("image/jpeg", quality); // 输出纯 string
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+  async function fileToDataUrl(file){
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result);
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
   }
 
   async function addDish(){
-    show("err", "");
     if(!isAdmin){
-      show("tip", "需要管理员登录才能添加。");
+      $("tip").textContent = "需要管理员模式才能添加。";
       return;
     }
-
-    const name = ($("name").value || "").trim();
-    if(!name){
-      show("err", "请先填写菜名。");
-      return;
-    }
-
-    const cat = ($("cat").value || "").trim() || "未分类";
-    const desc = ($("desc").value || "").trim();
-    const priceRaw = ($("price").value || "").trim();
-    const priceNum = priceRaw ? Number(priceRaw) : null;
-    const price = (typeof priceNum === "number" && Number.isFinite(priceNum)) ? priceNum : null; // ✅ null 代表没填
+    const name = $("name").value.trim();
+    if(!name){ $("tip").textContent = "请先填写菜名。"; return; }
+    const cat = ($("cat").value.trim() || "未分类");
+    const desc = $("desc").value.trim();
+    const priceRaw = $("price").value.trim();
+    const price = priceRaw ? Number(priceRaw) : NaN;
 
     const file = $("img").files?.[0] || null;
     let imgData = null;
-    if(file){
-      imgData = await imageFileToCompressedDataURL(file); // ✅ string
-    }
+    if(file) imgData = await fileToDataUrl(file);
 
-    state.dishes.push(sanitizeDish({ id: uid(), name, cat, desc, price, imgData }));
-
-    const ok = await persistCloud();
-    if(!ok) return;
-
+    state.dishes.push({ id: uid(), name, cat, desc, price: Number.isFinite(price) ? price : NaN, imgData });
+    await cloudSave();
     renderCats(); renderMenu();
     resetForm();
-    show("tip", "已保存菜品（全家同步）。");
+    $("tip").textContent = "已保存（云端同步）";
   }
 
   async function seed(){
     if(!isAdmin) return;
-    state.dishes = [...state.dishes, ...defaultDishes].map(sanitizeDish);
-    const ok = await persistCloud();
-    if(!ok) return;
+    state.dishes = [...state.dishes, ...defaultDishes];
+    await cloudSave();
     renderCats(); renderMenu();
-    show("tip", "已添加示例菜（全家同步）。");
+    $("tip").textContent = "已添加示例（云端同步）";
   }
 
   async function wipeAll(){
     if(!isAdmin) return;
     state.dishes = [];
-    const ok = await persistCloud();
-    if(!ok) return;
+    await cloudSave();
     renderCats(); renderMenu(); renderToday();
-    show("tip", "已清空全部菜品（全家同步）。");
+    $("tip").textContent = "已清空（云端同步）";
   }
 
   function clearToday(){
     state.today.clear();
     save(LS_TODAY, {});
     renderToday();
-    show("todayTip", "已清空今日清单（仅本机）。");
+    $("todayTip").textContent = "已清空今日清单（仅本机）";
   }
 
   async function copyToday(){
-    const note = ($("note").value || "").trim();
+    const note = $("note").value.trim();
     const items = [...state.today.entries()].map(([id, qtyStr]) => {
       const dish = state.dishes.find(d => d.id === id);
       const qty = Number(qtyStr) || 0;
       return dish ? `${dish.name} × ${qty}` : null;
     }).filter(Boolean);
 
-    const text = [
-      "今日菜单：",
-      ...items.map(x => "• " + x),
-      note ? `备注：${note}` : ""
-    ].filter(Boolean).join("\n");
+    const text = ["今日菜单：", ...items.map(x => "• " + x), note ? `备注：${note}` : ""]
+      .filter(Boolean).join("\n");
 
     try{
       await navigator.clipboard.writeText(text);
-      show("todayTip", "已复制到剪贴板。");
-    } catch {
-      show("todayTip", "复制失败（浏览器限制）。你可以手动选中复制。");
+      $("todayTip").textContent = "已复制到剪贴板。";
+    }catch{
+      $("todayTip").textContent = "复制失败（浏览器限制）。";
     }
   }
 
-  // ===== 绑定 =====
   $("addBtn").onclick = addDish;
   $("resetBtn").onclick = resetForm;
   $("seedBtn").onclick = seed;
@@ -533,40 +456,24 @@
     renderMenu();
   });
 
-  // 登录：Redirect（更稳）
-  $("loginBtn").onclick = async () => {
-    show("err", "");
-    try{
-      await signInWithRedirect(auth, provider);
-    } catch (e){
-      console.error(e);
-      show("err", "登录失败：请换 Chrome/Safari 再试。");
+  $("adminBtn").onclick = () => {
+    const pwd = prompt("输入管理员密码：");
+    if(pwd === ADMIN_PASSWORD){
+      setAdminUI(true);
+    }else{
+      alert("密码错误");
     }
   };
 
-  $("logoutBtn").onclick = async () => { await signOut(auth); };
+  $("exitAdminBtn").onclick = () => setAdminUI(false);
 
-  getRedirectResult(auth).catch(() => {});
+  // 启动
+  setAdminUI(isAdmin);
+  cloudLoad();
 
-  onAuthStateChanged(auth, (user) => {
-    const ok = !!user && user.email === ADMIN_EMAIL;
-    setAdminUI(ok);
-  });
-
-  // 云端同步
-  onSnapshot(menuRef, (snap) => {
-    const data = snap.data();
-    if(data?.dishes && Array.isArray(data.dishes)){
-      state.dishes = data.dishes.map(sanitizeDish); // 读回再清洗
-    } else {
-      state.dishes = defaultDishes.map(sanitizeDish);
-    }
-    show("dishCount", "菜品：" + state.dishes.length);
-    renderCats(); renderMenu(); renderToday();
-  });
-
-  // 初始渲染
-  renderCats(); renderMenu(); renderToday();
+  // 轮询刷新（简单可靠：每 10 秒拉一次，保证全家同步）
+  setInterval(cloudLoad, 10000);
 </script>
 </body>
 </html>
+
