@@ -195,10 +195,8 @@
   /*********************
    * 1) Firebase SDK（模块）
    *********************/
-  import { initializeApp } from "https://cdn.jsdelivr.net/npm/firebase@10.12.5/firebase-app.js";
-  import {
-    getFirestore, doc, getDoc, setDoc, onSnapshot
-  } from "https://cdn.jsdelivr.net/npm/firebase@10.12.5/firebase-firestore.js";
+ import { initializeApp } from "https://esm.sh/firebase@10.12.5/app";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://esm.sh/firebase@10.12.5/firestore";
 
   /*********************
    * 2) 工具函数
@@ -684,5 +682,6 @@
 </script>
 </body>
 </html>
+
 
 
