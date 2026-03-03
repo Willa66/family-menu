@@ -42,6 +42,7 @@
     .pill{ font-size:12px; padding:4px 8px; border-radius:999px; background:#f1f2f4; }
     .danger{ color:#b42318; }
     .hide{ display:none !important; }
+    .warn{ color:#b42318; font-size:12px; margin-top:8px; }
   </style>
 </head>
 <body>
@@ -55,7 +56,7 @@
 </header>
 
 <div class="wrap">
-  <!-- 左：管理（仅管理员可用） -->
+  <!-- 左：管理 -->
   <section class="panel">
     <h2>添加/管理菜品（仅管理员）</h2>
     <div class="p">
@@ -76,7 +77,7 @@
           <input id="price" placeholder="例如：25（不填也行）" inputmode="decimal" />
         </div>
         <div>
-          <label>图片（建议小一点）</label>
+          <label>图片（可选，自动压缩）</label>
           <input id="img" type="file" accept="image/*" />
         </div>
       </div>
@@ -97,6 +98,7 @@
           <button class="btn secondary danger" id="wipeBtn" style="flex:1;">清空全部菜品</button>
         </div>
         <div class="muted" id="tip"></div>
+        <div class="warn" id="err"></div>
       </div>
 
       <div class="muted" style="margin-top:10px;">
@@ -106,7 +108,7 @@
     </div>
   </section>
 
-  <!-- 中：菜单（所有人可看） -->
+  <!-- 中：菜单 -->
   <section class="panel">
     <h2>菜单</h2>
     <div class="cats" id="cats"></div>
@@ -116,7 +118,7 @@
     <div class="menu" id="menu"></div>
   </section>
 
-  <!-- 右：今日清单（每设备本地） -->
+  <!-- 右：今日清单 -->
   <aside class="panel">
     <h2>今日要做/要吃</h2>
     <div class="p">
@@ -143,12 +145,11 @@
 </div>
 
 <script type="module">
-  // ===== Firebase 引入 =====
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
   import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
-  // ===== 你的 firebaseConfig =====
+  // ===== 1) 你的 Firebase 配置 =====
   const firebaseConfig = {
     apiKey: "AIzaSyBomQvnrGffGpq4xd4rhF7amyiBME0eeMA",
     authDomain: "willa-menu-65de8.firebaseapp.com",
@@ -158,10 +159,9 @@
     appId: "1:521050906505:web:ef2706e06aa50c95284b58"
   };
 
-  // ===== 你的管理员邮箱 =====
+  // ===== 2) 管理员邮箱 =====
   const ADMIN_EMAIL = "yanwu6618@gmail.com";
 
-  // ===== 初始化（只一次）=====
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
@@ -169,17 +169,17 @@
   const menuRef = doc(db, "menus", "default");
 
   const $ = (id) => document.getElementById(id);
-  const on = (id, evt, fn) => { const el = $(id); if(el) el.addEventListener(evt, fn); };
+  const show = (id, txt) => { const el = $(id); if(el) el.textContent = txt || ""; };
 
   // 今日清单：每人本机
-  const LS_TODAY = "family_today_v2";
+  const LS_TODAY = "family_today_v3";
 
+  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
   function save(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
   function load(key, fallback){
     try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
     catch { return fallback; }
   }
-  function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
   function escapeHtml(str){
     return String(str).replace(/[&<>"']/g, s => ({
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -190,7 +190,7 @@
     return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
   }
 
-  // 默认示例菜（云端没初始化时显示）
+  // ===== 示例菜 =====
   const defaultDishes = [
     { id: uid(), name:"番茄炒蛋", cat:"家常菜", price:12, desc:"少油", imgData:null },
     { id: uid(), name:"玉米排骨汤", cat:"汤", price:28, desc:"清淡", imgData:null },
@@ -207,16 +207,22 @@
 
   let isAdmin = false;
 
+  // ===== 关键：净化数据（永远只返回纯 JSON 可存类型）=====
   function sanitizeDish(d){
-    const price = (typeof d.price === "number" && Number.isFinite(d.price)) ? d.price : null; // ✅ 不允许 NaN
+    const price = (typeof d.price === "number" && Number.isFinite(d.price)) ? d.price : null;
     return {
       id: String(d.id || uid()),
       name: String(d.name || "未命名"),
       cat: String(d.cat || "未分类"),
       desc: String(d.desc || ""),
       price,
-      imgData: d.imgData || null
+      imgData: (typeof d.imgData === "string" ? d.imgData : null)
     };
+  }
+
+  // ===== 关键：再做一次 JSON 强制净化（杀死 undefined/NaN/Infinity/对象等）=====
+  function toPlainJSON(x){
+    return JSON.parse(JSON.stringify(x));
   }
 
   function categories(){
@@ -228,17 +234,14 @@
   function setAdminUI(onAdmin){
     isAdmin = onAdmin;
 
-    // 管理区禁用/启用
+    // 禁用/启用管理区
     ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img"].forEach(id=>{
       const el = $(id);
       if(el) el.disabled = !onAdmin;
     });
 
-    if($("tip")){
-      $("tip").textContent = onAdmin
-        ? "管理员模式：可以修改菜单（全家同步）。"
-        : "访客模式：只能查看菜单。";
-    }
+    show("tip", onAdmin ? "管理员模式：可以修改菜单（全家同步）。" : "访客模式：只能查看菜单。");
+    show("err", "");
 
     $("loginBtn")?.classList.toggle("hide", onAdmin);
     $("logoutBtn")?.classList.toggle("hide", !onAdmin);
@@ -249,18 +252,18 @@
 
   async function persistCloud(){
     if(!isAdmin){
-      if($("tip")) $("tip").textContent = "你不是管理员，无法保存。";
+      show("tip", "你不是管理员，无法保存。");
       return false;
     }
+
     try{
-      // ✅ 写入前再清洗一次，确保没有 NaN/undefined
-      const clean = state.dishes.map(sanitizeDish);
+      const clean = toPlainJSON(state.dishes.map(sanitizeDish)); // ✅ 双保险
       await setDoc(menuRef, { dishes: clean, updatedAt: serverTimestamp() }, { merge: true });
-      if($("dishCount")) $("dishCount").textContent = "菜品：" + clean.length;
+      show("dishCount", "菜品：" + clean.length);
       return true;
     } catch(e){
-      console.error(e);
-      if($("tip")) $("tip").textContent = "保存失败：请看 Console 报错（常见原因：图片太大或权限问题）。";
+      console.error("Firestore 写入失败：", e);
+      show("err", "保存失败：请看 Console 报错（已打印）");
       return false;
     }
   }
@@ -340,8 +343,8 @@
     if(items.length === 0){
       wrap.className = "muted";
       wrap.textContent = "还没选菜";
-      if($("total")) $("total").textContent = "¥0";
-      if($("todayTip")) $("todayTip").textContent = "";
+      show("total", "¥0");
+      show("todayTip", "");
       return;
     }
 
@@ -372,8 +375,8 @@
       wrap.appendChild(row);
     });
 
-    if($("total")) $("total").textContent = money(total);
-    if($("todayTip")) $("todayTip").textContent = "提示：没填价格的菜不会计入总价。";
+    show("total", money(total));
+    show("todayTip", "提示：没填价格的菜不会计入总价。");
   }
 
   function addToToday(id){
@@ -398,48 +401,66 @@
     const ok = await persistCloud();
     if(!ok) return;
     renderCats(); renderMenu(); renderToday();
-    if($("tip")) $("tip").textContent = "已删除菜品（全家同步）。";
+    show("tip", "已删除菜品（全家同步）。");
   }
 
   function resetForm(){
-    if($("name")) $("name").value = "";
-    if($("cat")) $("cat").value = "";
-    if($("price")) $("price").value = "";
-    if($("desc")) $("desc").value = "";
-    if($("img")) $("img").value = "";
+    $("name").value = "";
+    $("cat").value = "";
+    $("price").value = "";
+    $("desc").value = "";
+    $("img").value = "";
+    show("err", "");
   }
 
-  async function fileToDataUrl(file){
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(fr.result);
-      fr.onerror = reject;
-      fr.readAsDataURL(file);
-    });
+  // ===== 图片压缩：避免过大，也避免异常类型 =====
+  async function imageFileToCompressedDataURL(file, maxSide = 900, quality = 0.75){
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    try{
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      const cw = Math.max(1, Math.round(w * scale));
+      const ch = Math.max(1, Math.round(h * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, cw, ch);
+
+      return canvas.toDataURL("image/jpeg", quality); // 输出纯 string
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   async function addDish(){
+    show("err", "");
     if(!isAdmin){
-      if($("tip")) $("tip").textContent = "需要管理员登录才能添加。";
+      show("tip", "需要管理员登录才能添加。");
       return;
     }
-    const name = ($("name")?.value || "").trim();
+
+    const name = ($("name").value || "").trim();
     if(!name){
-      if($("tip")) $("tip").textContent = "请先填写菜名。";
+      show("err", "请先填写菜名。");
       return;
     }
-    const cat = (($("cat")?.value || "").trim() || "未分类");
-    const desc = (($("desc")?.value || "").trim());
-    const priceRaw = (($("price")?.value || "").trim());
+
+    const cat = ($("cat").value || "").trim() || "未分类";
+    const desc = ($("desc").value || "").trim();
+    const priceRaw = ($("price").value || "").trim();
     const priceNum = priceRaw ? Number(priceRaw) : null;
+    const price = (typeof priceNum === "number" && Number.isFinite(priceNum)) ? priceNum : null; // ✅ null 代表没填
 
-    // ✅ Firestore 不允许 NaN，所以没填/非法就存 null
-    const price = (typeof priceNum === "number" && Number.isFinite(priceNum)) ? priceNum : null;
-
-    const file = $("img")?.files?.[0] || null;
+    const file = $("img").files?.[0] || null;
     let imgData = null;
     if(file){
-      imgData = await fileToDataUrl(file); // 如果你之后遇到“图片太大”，我再给你加自动压缩/或改 Storage
+      imgData = await imageFileToCompressedDataURL(file); // ✅ string
     }
 
     state.dishes.push(sanitizeDish({ id: uid(), name, cat, desc, price, imgData }));
@@ -449,7 +470,7 @@
 
     renderCats(); renderMenu();
     resetForm();
-    if($("tip")) $("tip").textContent = "已保存菜品（全家同步）。";
+    show("tip", "已保存菜品（全家同步）。");
   }
 
   async function seed(){
@@ -458,7 +479,7 @@
     const ok = await persistCloud();
     if(!ok) return;
     renderCats(); renderMenu();
-    if($("tip")) $("tip").textContent = "已添加示例菜（全家同步）。";
+    show("tip", "已添加示例菜（全家同步）。");
   }
 
   async function wipeAll(){
@@ -467,18 +488,18 @@
     const ok = await persistCloud();
     if(!ok) return;
     renderCats(); renderMenu(); renderToday();
-    if($("tip")) $("tip").textContent = "已清空全部菜品（全家同步）。";
+    show("tip", "已清空全部菜品（全家同步）。");
   }
 
   function clearToday(){
     state.today.clear();
     save(LS_TODAY, {});
     renderToday();
-    if($("todayTip")) $("todayTip").textContent = "已清空今日清单（仅本机）。";
+    show("todayTip", "已清空今日清单（仅本机）。");
   }
 
   async function copyToday(){
-    const note = ($("note")?.value || "").trim();
+    const note = ($("note").value || "").trim();
     const items = [...state.today.entries()].map(([id, qtyStr]) => {
       const dish = state.dishes.find(d => d.id === id);
       const qty = Number(qtyStr) || 0;
@@ -493,58 +514,54 @@
 
     try{
       await navigator.clipboard.writeText(text);
-      if($("todayTip")) $("todayTip").textContent = "已复制到剪贴板。";
+      show("todayTip", "已复制到剪贴板。");
     } catch {
-      if($("todayTip")) $("todayTip").textContent = "复制失败（浏览器限制）。你可以手动选中复制。";
+      show("todayTip", "复制失败（浏览器限制）。你可以手动选中复制。");
     }
   }
 
-  // ===== 事件绑定 =====
-  on("addBtn","click", addDish);
-  on("resetBtn","click", resetForm);
-  on("seedBtn","click", seed);
-  on("wipeBtn","click", wipeAll);
-  on("clearTodayBtn","click", clearToday);
-  on("copyBtn","click", copyToday);
+  // ===== 绑定 =====
+  $("addBtn").onclick = addDish;
+  $("resetBtn").onclick = resetForm;
+  $("seedBtn").onclick = seed;
+  $("wipeBtn").onclick = wipeAll;
+  $("clearTodayBtn").onclick = clearToday;
+  $("copyBtn").onclick = copyToday;
 
-  $("search")?.addEventListener("input", (e) => {
+  $("search").addEventListener("input", (e) => {
     state.search = e.target.value || "";
     renderMenu();
   });
 
-  // ✅ Redirect 登录（手机最稳）
-  on("loginBtn","click", async () => {
+  // 登录：Redirect（更稳）
+  $("loginBtn").onclick = async () => {
+    show("err", "");
     try{
       await signInWithRedirect(auth, provider);
     } catch (e){
       console.error(e);
-      if($("tip")) $("tip").textContent = "登录失败：请换 Chrome/Safari 再试。";
+      show("err", "登录失败：请换 Chrome/Safari 再试。");
     }
-  });
+  };
 
-  on("logoutBtn","click", async () => {
-    await signOut(auth);
-  });
+  $("logoutBtn").onclick = async () => { await signOut(auth); };
 
-  // 处理 redirect 回跳结果（不需要显示也行）
   getRedirectResult(auth).catch(() => {});
 
-  // 登录状态 → 判断是否管理员
   onAuthStateChanged(auth, (user) => {
     const ok = !!user && user.email === ADMIN_EMAIL;
     setAdminUI(ok);
   });
 
-  // 云端菜单实时同步
+  // 云端同步
   onSnapshot(menuRef, (snap) => {
     const data = snap.data();
     if(data?.dishes && Array.isArray(data.dishes)){
-      state.dishes = data.dishes.map(sanitizeDish);
+      state.dishes = data.dishes.map(sanitizeDish); // 读回再清洗
     } else {
-      // 云端未初始化时先显示默认示例菜
       state.dishes = defaultDishes.map(sanitizeDish);
     }
-    if($("dishCount")) $("dishCount").textContent = "菜品：" + state.dishes.length;
+    show("dishCount", "菜品：" + state.dishes.length);
     renderCats(); renderMenu(); renderToday();
   });
 
@@ -553,5 +570,3 @@
 </script>
 </body>
 </html>
-
-
