@@ -1,3 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>家庭菜单</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, "PingFang SC","Microsoft YaHei", sans-serif; }
+    body{ margin:0; background:#f6f7f9; }
+    header{ position:sticky; top:0; z-index:5; background:#fff; border-bottom:1px solid #e7e7e7; padding:12px 14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    header h1{ margin:0; font-size:16px; flex:1; }
+    .btn{ border:0; border-radius:12px; padding:10px 12px; cursor:pointer; background:#111; color:#fff; }
+    .btn.secondary{ background:#f1f2f4; color:#111; border:1px solid #e7e7e7; }
+    .wrap{ display:grid; grid-template-columns: 320px 1fr 360px; gap:12px; padding:12px; }
+    @media (max-width: 980px){ .wrap{ grid-template-columns: 1fr; } }
+    .panel{ background:#fff; border:1px solid #e7e7e7; border-radius:14px; overflow:hidden; }
+    .panel h2{ margin:0; font-size:14px; padding:12px 14px; border-bottom:1px solid #eee; background:#fafafa; }
+    .p{ padding:12px; }
+    label{ display:block; font-size:12px; color:#666; margin-bottom:6px; }
+    input, textarea{ width:100%; box-sizing:border-box; padding:10px; border-radius:12px; border:1px solid #e7e7e7; }
+    .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .muted{ color:#666; font-size:12px; }
+    .cats{ padding:10px; display:flex; flex-wrap:wrap; gap:8px; }
+    .chip{ border:1px solid #e7e7e7; background:#fff; border-radius:999px; padding:8px 10px; cursor:pointer; font-size:12px; }
+    .chip.active{ border-color:#111; }
+    .menu{ padding:10px; display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:10px; }
+    @media (max-width: 980px){ .menu{ grid-template-columns: repeat(2, minmax(0,1fr)); } }
+    @media (max-width: 520px){ .menu{ grid-template-columns: 1fr; } }
+    .card{ border:1px solid #eee; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
+    .img{ width:100%; aspect-ratio: 4 / 3; background:#f1f2f4; display:flex; align-items:center; justify-content:center; color:#888; font-size:12px; }
+    .img img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .card .c{ padding:10px; display:flex; flex-direction:column; gap:6px; }
+    .name{ font-weight:800; }
+    .meta{ display:flex; justify-content:space-between; gap:8px; font-size:12px; color:#666; }
+    .row{ display:flex; align-items:center; gap:8px; border:1px solid #eee; border-radius:14px; padding:10px; }
+    .row .meta2{ flex:1; }
+    .row .meta2 .n{ font-weight:800; }
+    .qty{ display:flex; align-items:center; gap:6px; }
+    .qty button{ width:32px; height:32px; border-radius:10px; border:1px solid #e7e7e7; background:#fff; cursor:pointer; }
+    .sum{ border-top:1px solid #eee; padding-top:10px; display:flex; flex-direction:column; gap:8px; }
+    .actions{ display:flex; gap:8px; }
+    .pill{ font-size:12px; padding:4px 8px; border-radius:999px; background:#f1f2f4; }
+    .danger{ color:#b42318; }
+    .hide{ display:none !important; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🍳 家庭菜单</h1>
+  <span class="pill" id="dishCount">菜品：0</span>
+
+  <button class="btn secondary" id="loginBtn">管理员登录</button>
+  <button class="btn secondary hide" id="logoutBtn">退出登录</button>
+  <span class="pill" id="who">访客模式</span>
+</header>
+
+<div class="wrap">
+  <section class="panel">
+    <h2>添加/管理菜品（仅管理员）</h2>
+    <div class="p">
+      <div class="grid2">
+        <div>
+          <label>菜名</label>
+          <input id="name" placeholder="例如：红烧排骨" />
+        </div>
+        <div>
+          <label>分类</label>
+          <input id="cat" placeholder="例如：家常菜 / 汤 / 甜品" />
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px;">
+        <div>
+          <label>价格（可选）</label>
+          <input id="price" placeholder="例如：25（不填也行）" inputmode="decimal" />
+        </div>
+        <div>
+          <label>图片（建议小一点）</label>
+          <input id="img" type="file" accept="image/*" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label>备注（可选）</label>
+        <input id="desc" placeholder="例如：少油 / 微辣" />
+      </div>
+
+      <div class="actions" style="margin-top:12px;">
+        <button class="btn" id="addBtn" style="flex:1;">保存菜品</button>
+        <button class="btn secondary" id="resetBtn" style="flex:1;">清空输入</button>
+      </div>
+
+      <div class="sum" style="margin-top:12px;">
+        <div class="actions">
+          <button class="btn secondary" id="seedBtn" style="flex:1;">添加示例菜</button>
+          <button class="btn secondary danger" id="wipeBtn" style="flex:1;">清空全部菜品</button>
+        </div>
+        <div class="muted" id="tip"></div>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        菜单存云端：你改一次，全家所有设备刷新后都是最新。<br/>
+        右侧“今日清单”仍然是每个人自己的。
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>菜单</h2>
+    <div class="cats" id="cats"></div>
+    <div class="p" style="padding-top:0;">
+      <input id="search" placeholder="搜索菜名..." />
+    </div>
+    <div class="menu" id="menu"></div>
+  </section>
+
+  <aside class="panel">
+    <h2>今日要做/要吃</h2>
+    <div class="p">
+      <div id="todayList" class="muted">还没选菜</div>
+
+      <div style="margin-top:10px;">
+        <label>整单备注（可选）</label>
+        <textarea id="note" rows="2" placeholder="例如：今天清淡一点"></textarea>
+      </div>
+
+      <div class="sum">
+        <div style="display:flex; justify-content:space-between;">
+          <div>预计总价</div>
+          <div style="font-weight:900;" id="total">¥0</div>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" id="clearTodayBtn" style="flex:1;">清空今日清单</button>
+          <button class="btn" id="copyBtn" style="flex:1;">复制清单</button>
+        </div>
+        <div class="muted" id="todayTip"></div>
+      </div>
+    </div>
+  </aside>
+</div>
+
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getFirestore, doc, setDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
@@ -14,7 +155,6 @@
 
   const ADMIN_EMAIL = "yanwu6618@gmail.com";
 
-  // ✅ 只初始化一次
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app);
   const auth = getAuth(app);
@@ -22,6 +162,7 @@
   const menuRef = doc(db, "menus", "default");
 
   const $ = (id) => document.getElementById(id);
+  const on = (id, evt, fn) => { const el = $(id); if(el) el.addEventListener(evt, fn); };
 
   const LS_TODAY = "family_today_v2";
 
@@ -63,40 +204,36 @@
     return ["全部", ...cats];
   }
 
-  function setAdminUI(on){
-    isAdmin = on;
+  function setAdminUI(onFlag){
+    isAdmin = onFlag;
 
-    $("addBtn").disabled = !on;
-    $("seedBtn").disabled = !on;
-    $("wipeBtn").disabled = !on;
-    $("name").disabled = !on;
-    $("cat").disabled = !on;
-    $("price").disabled = !on;
-    $("desc").disabled = !on;
-    $("img").disabled = !on;
+    ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img"].forEach(id=>{
+      const el = $(id); if(el) el.disabled = !onFlag;
+    });
 
-    $("tip").textContent = on
+    if($("tip")) $("tip").textContent = onFlag
       ? "管理员模式：可以修改菜单（全家同步）。"
       : "访客模式：只能查看菜单。";
 
-    $("loginBtn").classList.toggle("hide", on);
-    $("logoutBtn").classList.toggle("hide", !on);
-    $("who").textContent = on ? ("管理员：" + ADMIN_EMAIL) : "访客模式";
+    if($("loginBtn")) $("loginBtn").classList.toggle("hide", onFlag);
+    if($("logoutBtn")) $("logoutBtn").classList.toggle("hide", !onFlag);
+    if($("who")) $("who").textContent = onFlag ? ("管理员：" + ADMIN_EMAIL) : "访客模式";
 
     renderMenu();
   }
 
   async function persistCloud(){
     if(!isAdmin){
-      $("tip").textContent = "你不是管理员，无法保存。";
+      if($("tip")) $("tip").textContent = "你不是管理员，无法保存。";
       return;
     }
     await setDoc(menuRef, { dishes: state.dishes, updatedAt: serverTimestamp() }, { merge: true });
-    $("dishCount").textContent = "菜品：" + state.dishes.length;
+    if($("dishCount")) $("dishCount").textContent = "菜品：" + state.dishes.length;
   }
 
   function renderCats(){
     const wrap = $("cats");
+    if(!wrap) return;
     wrap.innerHTML = "";
     categories().forEach(c => {
       const b = document.createElement("button");
@@ -109,6 +246,7 @@
 
   function renderMenu(){
     const wrap = $("menu");
+    if(!wrap) return;
     wrap.innerHTML = "";
 
     const list = state.dishes
@@ -144,7 +282,7 @@
 
       const [addBtn, delBtn] = card.querySelectorAll("button");
       addBtn.onclick = () => addToToday(d.id);
-      if (delBtn) delBtn.onclick = () => deleteDish(d.id);
+      delBtn.onclick = () => deleteDish(d.id);
 
       wrap.appendChild(card);
     });
@@ -152,6 +290,8 @@
 
   function renderToday(){
     const wrap = $("todayList");
+    if(!wrap) return;
+
     const items = [...state.today.entries()]
       .map(([id, qtyStr]) => {
         const qty = Number(qtyStr) || 0;
@@ -163,8 +303,8 @@
     if(items.length === 0){
       wrap.className = "muted";
       wrap.textContent = "还没选菜";
-      $("total").textContent = "¥0";
-      $("todayTip").textContent = "";
+      if($("total")) $("total").textContent = "¥0";
+      if($("todayTip")) $("todayTip").textContent = "";
       return;
     }
 
@@ -195,8 +335,8 @@
       wrap.appendChild(row);
     });
 
-    $("total").textContent = money(total);
-    $("todayTip").textContent = "提示：没填价格的菜不会计入总价。";
+    if($("total")) $("total").textContent = money(total);
+    if($("todayTip")) $("todayTip").textContent = "提示：没填价格的菜不会计入总价。";
   }
 
   function addToToday(id){
@@ -220,15 +360,11 @@
     save(LS_TODAY, Object.fromEntries(state.today));
     await persistCloud();
     renderCats(); renderMenu(); renderToday();
-    $("tip").textContent = "已删除菜品（全家同步）。";
+    if($("tip")) $("tip").textContent = "已删除菜品（全家同步）。";
   }
 
   function resetForm(){
-    $("name").value = "";
-    $("cat").value = "";
-    $("price").value = "";
-    $("desc").value = "";
-    $("img").value = "";
+    ["name","cat","price","desc","img"].forEach(id => { const el=$(id); if(el) el.value=""; });
   }
 
   async function fileToDataUrl(file){
@@ -242,20 +378,20 @@
 
   async function addDish(){
     if(!isAdmin){
-      $("tip").textContent = "需要管理员登录才能添加。";
+      if($("tip")) $("tip").textContent = "需要管理员登录才能添加。";
       return;
     }
-    const name = $("name").value.trim();
+    const name = ($("name")?.value || "").trim();
     if(!name){
-      $("tip").textContent = "请先填写菜名。";
+      if($("tip")) $("tip").textContent = "请先填写菜名。";
       return;
     }
-    const cat = ($("cat").value.trim() || "未分类");
-    const desc = $("desc").value.trim();
-    const priceRaw = $("price").value.trim();
+    const cat = (($("cat")?.value || "").trim() || "未分类");
+    const desc = (($("desc")?.value || "").trim());
+    const priceRaw = (($("price")?.value || "").trim());
     const price = priceRaw ? Number(priceRaw) : NaN;
 
-    const file = $("img").files?.[0] || null;
+    const file = $("img")?.files?.[0] || null;
     let imgData = null;
     if(file) imgData = await fileToDataUrl(file);
 
@@ -263,7 +399,7 @@
     await persistCloud();
     renderCats(); renderMenu();
     resetForm();
-    $("tip").textContent = "已保存菜品（全家同步）。";
+    if($("tip")) $("tip").textContent = "已保存菜品（全家同步）。";
   }
 
   async function seed(){
@@ -271,7 +407,7 @@
     state.dishes = [...state.dishes, ...defaultDishes];
     await persistCloud();
     renderCats(); renderMenu();
-    $("tip").textContent = "已添加示例菜（全家同步）。";
+    if($("tip")) $("tip").textContent = "已添加示例菜（全家同步）。";
   }
 
   async function wipeAll(){
@@ -279,56 +415,53 @@
     state.dishes = [];
     await persistCloud();
     renderCats(); renderMenu(); renderToday();
-    $("tip").textContent = "已清空全部菜品（全家同步）。";
+    if($("tip")) $("tip").textContent = "已清空全部菜品（全家同步）。";
   }
 
   function clearToday(){
     state.today.clear();
     save(LS_TODAY, {});
     renderToday();
-    $("todayTip").textContent = "已清空今日清单（仅本机）。";
+    if($("todayTip")) $("todayTip").textContent = "已清空今日清单（仅本机）。";
   }
 
   async function copyToday(){
-    const note = $("note").value.trim();
+    const note = ($("note")?.value || "").trim();
     const items = [...state.today.entries()].map(([id, qtyStr]) => {
       const dish = state.dishes.find(d => d.id === id);
       const qty = Number(qtyStr) || 0;
       return dish ? `${dish.name} × ${qty}` : null;
     }).filter(Boolean);
 
-    const text = [
-      "今日菜单：",
-      ...items.map(x => "• " + x),
-      note ? `备注：${note}` : ""
-    ].filter(Boolean).join("\n");
+    const text = ["今日菜单：", ...items.map(x => "• " + x), note ? `备注：${note}` : ""].filter(Boolean).join("\n");
 
     try{
       await navigator.clipboard.writeText(text);
-      $("todayTip").textContent = "已复制到剪贴板。";
+      if($("todayTip")) $("todayTip").textContent = "已复制到剪贴板。";
     } catch {
-      $("todayTip").textContent = "复制失败（浏览器限制）。你可以手动选中复制。";
+      if($("todayTip")) $("todayTip").textContent = "复制失败（浏览器限制）。";
     }
   }
 
-  $("addBtn").onclick = addDish;
-  $("resetBtn").onclick = resetForm;
-  $("seedBtn").onclick = seed;
-  $("wipeBtn").onclick = wipeAll;
-  $("clearTodayBtn").onclick = clearToday;
-  $("copyBtn").onclick = copyToday;
+  // 事件绑定
+  on("addBtn","click", addDish);
+  on("resetBtn","click", resetForm);
+  on("seedBtn","click", seed);
+  on("wipeBtn","click", wipeAll);
+  on("clearTodayBtn","click", clearToday);
+  on("copyBtn","click", copyToday);
 
-  $("search").addEventListener("input", (e) => {
-    state.search = e.target.value || "";
-    renderMenu();
+  const searchEl = $("search");
+  if(searchEl){
+    searchEl.addEventListener("input", (e) => { state.search = e.target.value || ""; renderMenu(); });
+  }
+
+  on("loginBtn","click", async () => {
+    try { await signInWithPopup(auth, provider); }
+    catch { if($("tip")) $("tip").textContent = "登录失败：请允许弹窗，或换 Chrome/Safari 再试。"; }
   });
 
-  $("loginBtn").onclick = async () => {
-    try{ await signInWithPopup(auth, provider); }
-    catch { $("tip").textContent = "登录失败：请允许弹窗，或换 Chrome/Safari 再试。"; }
-  };
-
-  $("logoutBtn").onclick = async () => { await signOut(auth); };
+  on("logoutBtn","click", async () => { await signOut(auth); });
 
   onAuthStateChanged(auth, (user) => {
     const ok = !!user && user.email === ADMIN_EMAIL;
@@ -337,15 +470,13 @@
 
   onSnapshot(menuRef, (snap) => {
     const data = snap.data();
-    if(data?.dishes && Array.isArray(data.dishes)){
-      state.dishes = data.dishes;
-    } else {
-      // 云端没初始化时先显示默认示例菜
-      state.dishes = defaultDishes;
-    }
-    $("dishCount").textContent = "菜品：" + state.dishes.length;
+    state.dishes = (data?.dishes && Array.isArray(data.dishes)) ? data.dishes : defaultDishes;
+    if($("dishCount")) $("dishCount").textContent = "菜品：" + state.dishes.length;
     renderCats(); renderMenu(); renderToday();
   });
 
   renderCats(); renderMenu(); renderToday();
 </script>
+</body>
+</html>
+
