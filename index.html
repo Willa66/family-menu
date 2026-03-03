@@ -49,6 +49,7 @@
     .modal h3{ margin:0; padding:14px 16px; font-size:14px; border-bottom:1px solid #eee; background:#fafafa; }
     .modal .b{ padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
     .modal .ft{ padding:14px 16px; border-top:1px solid #eee; display:flex; gap:8px; justify-content:flex-end; }
+    code.k{ background:#f1f2f4; padding:2px 6px; border-radius:8px; }
   </style>
 </head>
 <body>
@@ -64,9 +65,9 @@
 </header>
 
 <div class="wrap">
-  <!-- 左：管理（仅管理员可用） -->
+  <!-- 左：管理 -->
   <section class="panel">
-    <h2>添加/管理菜品（仅管理员）</h2>
+    <h2>添加/管理菜品（管理员）</h2>
     <div class="p">
       <div class="grid2">
         <div>
@@ -115,7 +116,7 @@
     </div>
   </section>
 
-  <!-- 中：菜单（所有人可看） -->
+  <!-- 中：菜单 -->
   <section class="panel">
     <h2>菜单</h2>
     <div class="cats" id="cats"></div>
@@ -125,7 +126,7 @@
     <div class="menu" id="menu"></div>
   </section>
 
-  <!-- 右：今日清单（每设备本地） -->
+  <!-- 右：今日清单 -->
   <aside class="panel">
     <h2>今日要做/要吃</h2>
     <div class="p">
@@ -156,9 +157,12 @@
   <div class="modal">
     <h3>管理员登录</h3>
     <div class="b">
-      <div class="muted">请输入管理员密码（只有你知道）。</div>
+      <div class="muted">请输入管理员密码。</div>
       <input id="pwd" type="password" placeholder="管理员密码" />
       <div class="muted" id="pwdTip"></div>
+      <div class="muted">
+        提示：此方案为“家庭自用简化版”，密码会出现在网页源码里（不适合公开商用）。
+      </div>
     </div>
     <div class="ft">
       <button class="btn secondary" id="cancelPwd">取消</button>
@@ -167,31 +171,45 @@
   </div>
 </div>
 
-<!-- CloudBase SDK -->
-<script src="https://imgcache.qq.com/qcloud/tcbjs/1.10.10/tcb.js"></script>
+<!-- Firebase（jsDelivr，国内一般更稳） -->
+<script type="module">
+  /*********************
+   * 0) 你的配置（保持你现有 Firebase 项目）
+   *********************/
+  const firebaseConfig = {
+    apiKey: "AIzaSyBomQvnrGffGpq4xd4rhF7amyiBME0eeMA",
+    authDomain: "willa-menu-65de8.firebaseapp.com",
+    projectId: "willa-menu-65de8",
+    storageBucket: "willa-menu-65de8.firebasestorage.app",
+    messagingSenderId: "521050906505",
+    appId: "1:521050906505:web:ef2706e06aa50c95284b58"
+  };
 
-<script>
-  /***************
-   * 0) 你的配置
-   ***************/
-  const ENV_ID = "family-menu-8glw5574d2a04448";
-  const ADMIN_PASSWORD = "willa";          // 你给的管理员密码
+  // ✅ 管理员密码（你要改就改这里）
+  const ADMIN_PASSWORD = "willa";
+
+  // ✅ Firestore 文档位置（与你之前一致）
   const COL = "menus";
   const DOC_ID = "default";
 
-  /***************
-   * 1) 工具函数
-   ***************/
+  /*********************
+   * 1) Firebase SDK（模块）
+   *********************/
+  import { initializeApp } from "https://cdn.jsdelivr.net/npm/firebase@10.12.5/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot
+  } from "https://cdn.jsdelivr.net/npm/firebase@10.12.5/firebase-firestore.js";
+
+  /*********************
+   * 2) 工具函数
+   *********************/
   const $ = (id) => document.getElementById(id);
-  const LS_ADMIN = "family_menu_admin_v1"; // sessionStorage
-  const LS_TODAY = "family_today_v3";
+
+  const SS_ADMIN = "family_menu_admin_v1";      // sessionStorage：管理员状态（只在当前浏览器会话）
+  const LS_TODAY = "family_today_v4";           // localStorage：今日清单（每台设备独立）
+  const LS_CACHED_MENU = "family_menu_cache_v1";// localStorage：菜单缓存（云端失败时兜底显示）
 
   function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
-  function saveLocal(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
-  function loadLocal(key, fallback){
-    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
-    catch { return fallback; }
-  }
   function money(n){
     if (!Number.isFinite(n)) return "¥0";
     return "¥" + (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/,"");
@@ -201,63 +219,88 @@
       "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
     }[s]));
   }
-  function shallowDish(d){
-    // 确保写入数据库的是“纯 JSON”类型（避免出现 invalid nested entity）
+  function saveLocal(key, val){ localStorage.setItem(key, JSON.stringify(val)); }
+  function loadLocal(key, fallback){
+    try { return JSON.parse(localStorage.getItem(key) || "null") ?? fallback; }
+    catch { return fallback; }
+  }
+
+  // 🔒 关键：写入 Firestore 的对象必须是“纯 JSON”
+  // - 不要 NaN / undefined / Map / Date / 函数 / class / DOM
+  function normalizeDish(d){
+    const priceNum = (d && d.price !== null && d.price !== "" && Number.isFinite(Number(d.price)))
+      ? Number(d.price)
+      : null;
+
+    const img = (typeof d?.imgData === "string" && d.imgData.startsWith("data:")) ? d.imgData : null;
+
     return {
-      id: String(d.id || uid()),
-      name: String(d.name || ""),
-      cat: String(d.cat || "未分类"),
-      desc: String(d.desc || ""),
-      price: Number.isFinite(d.price) ? Number(d.price) : null,
-      imgData: (typeof d.imgData === "string" && d.imgData.startsWith("data:")) ? d.imgData : null
+      id: String(d?.id || uid()),
+      name: String(d?.name || "").trim(),
+      cat: String(d?.cat || "未分类").trim() || "未分类",
+      desc: String(d?.desc || "").trim(),
+      price: priceNum,
+      imgData: img
     };
   }
 
-  /***************
-   * 2) 默认菜
-   ***************/
+  async function fileToDataUrlCompressed(file, maxW=900, quality=0.78){
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = rej;
+      i.src = URL.createObjectURL(file);
+    });
+
+    const scale = Math.min(1, maxW / img.width);
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+    URL.revokeObjectURL(img.src);
+
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  function setTip(msg){ $("tip").textContent = msg || ""; }
+
+  function isAdmin(){ return sessionStorage.getItem(SS_ADMIN) === "1"; }
+  function setAdmin(on){
+    sessionStorage.setItem(SS_ADMIN, on ? "1" : "0");
+    $("unlockBtn").classList.toggle("hide", on);
+    $("lockBtn").classList.toggle("hide", !on);
+    $("who").textContent = on ? "管理员模式" : "访客模式";
+
+    // 管理区输入与按钮
+    const dis = !on;
+    ["addBtn","seedBtn","wipeBtn","name","cat","price","desc","img"].forEach(id => $(id).disabled = dis);
+
+    setTip(on ? "管理员模式：可以修改菜单（云端同步）。" : "访客模式：只能查看菜单。");
+    renderMenu();
+  }
+
+  /*********************
+   * 3) 默认菜（云端空/失败时兜底）
+   *********************/
   const defaultDishes = [
     { id: uid(), name:"番茄炒蛋", cat:"家常菜", price:12, desc:"少油", imgData:null },
-    { id: uid(), name:"玉米排骨汤", cat:"汤",     price:28, desc:"清淡", imgData:null },
-    { id: uid(), name:"清炒西兰花", cat:"蔬菜",   price:10, desc:"蒜蓉", imgData:null },
-    { id: uid(), name:"可乐鸡翅",   cat:"荤菜",   price:26, desc:"微甜", imgData:null },
-  ].map(shallowDish);
+    { id: uid(), name:"玉米排骨汤", cat:"汤", price:28, desc:"清淡", imgData:null },
+    { id: uid(), name:"清炒西兰花", cat:"蔬菜", price:10, desc:"蒜蓉", imgData:null },
+    { id: uid(), name:"可乐鸡翅", cat:"荤菜", price:26, desc:"微甜", imgData:null },
+  ].map(normalizeDish);
 
-  /***************
-   * 3) 状态
-   ***************/
+  /*********************
+   * 4) 状态
+   *********************/
   const state = {
     dishes: [],
     today: new Map(Object.entries(loadLocal(LS_TODAY, {}))),
     cat: "全部",
     search: ""
   };
-
-  function isAdmin(){
-    return sessionStorage.getItem(LS_ADMIN) === "1";
-  }
-  function setAdmin(on){
-    sessionStorage.setItem(LS_ADMIN, on ? "1" : "0");
-
-    $("addBtn").disabled = !on;
-    $("seedBtn").disabled = !on;
-    $("wipeBtn").disabled = !on;
-    $("name").disabled = !on;
-    $("cat").disabled = !on;
-    $("price").disabled = !on;
-    $("desc").disabled = !on;
-    $("img").disabled = !on;
-
-    $("unlockBtn").classList.toggle("hide", on);
-    $("lockBtn").classList.toggle("hide", !on);
-    $("who").textContent = on ? "管理员模式" : "访客模式";
-
-    $("tip").textContent = on
-      ? "管理员模式：你可以修改菜单（云端同步）。"
-      : "访客模式：只能查看菜单。";
-
-    renderMenu();
-  }
 
   function categories(){
     const cats = [...new Set(state.dishes.map(d => d.cat || "未分类"))];
@@ -287,7 +330,7 @@
       .filter(d => (d.name || "").toLowerCase().includes(state.search.toLowerCase().trim()));
 
     if(list.length === 0){
-      wrap.innerHTML = `<div class="muted" style="padding:10px;">暂无菜品。管理员登录后可添加。</div>`;
+      wrap.innerHTML = `<div class="muted" style="padding:10px;">暂无菜品。</div>`;
       return;
     }
 
@@ -314,10 +357,7 @@
         </div>
       `;
 
-      const btns = card.querySelectorAll("button");
-      const addBtn = btns[0];
-      const delBtn = btns[1];
-
+      const [addBtn, delBtn] = card.querySelectorAll("button");
       addBtn.onclick = () => addToToday(d.id);
       if (delBtn) delBtn.onclick = () => deleteDish(d.id);
 
@@ -396,228 +436,139 @@
     $("img").value = "";
   }
 
-  /***************
-   * 4) 图片压缩（避免文档超限）
-   ***************/
-  async function fileToDataUrlCompressed(file, maxW=900, quality=0.78){
-    const img = await new Promise((res, rej) => {
-      const i = new Image();
-      i.onload = () => res(i);
-      i.onerror = rej;
-      i.src = URL.createObjectURL(file);
-    });
+  /*********************
+   * 5) Firestore：读写 + 实时同步
+   *********************/
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const menuRef = doc(db, COL, DOC_ID);
 
-    const scale = Math.min(1, maxW / img.width);
-    const w = Math.round(img.width * scale);
-    const h = Math.round(img.height * scale);
+  function applyDishes(list, note){
+    state.dishes = (Array.isArray(list) ? list : []).map(normalizeDish).filter(d => d.name);
+    $("dishCount").textContent = "菜品：" + state.dishes.length;
+    renderCats(); renderMenu(); renderToday();
 
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, w, h);
+    // 缓存一份，云端失败时给手机兜底
+    saveLocal(LS_CACHED_MENU, { dishes: state.dishes, cachedAt: Date.now() });
 
-    URL.revokeObjectURL(img.src);
-
-    return canvas.toDataURL("image/jpeg", quality);
+    if(note) setTip(note);
   }
 
-  /***************
-   * 5) CloudBase：初始化 + 读写 + 监听
-   ***************/
-  let app, db, col;
-  let watcher = null;
-  let pollingTimer = null;
-
-  function setStatus(msg){
-    $("tip").textContent = msg || "";
+  async function fetchOnce(){
+    const snap = await getDoc(menuRef);
+    const data = snap.exists() ? snap.data() : null;
+    if(data && Array.isArray(data.dishes)) return data.dishes;
+    return null;
   }
 
-  async function initCloudBase(){
-    if(!window.cloudbase){
-      setStatus("CloudBase SDK 加载失败。请刷新重试。");
-      return;
-    }
-
-    app = cloudbase.init({ env: ENV_ID });
-    // 匿名登录（不需要安装软件、不需要账号）
-    try { await app.auth().anonymousAuthProvider().signIn(); } catch(e){ /* 忽略 */ }
-
-    db = app.database();
-    col = db.collection(COL);
-
-    // 先拉一次
-    await refreshFromCloud(true);
-
-    // 尝试实时监听（如果环境不支持，则降级轮询）
-    startWatchOrPolling();
-  }
-
-  async function refreshFromCloud(quiet=false){
-    try{
-      const res = await col.doc(DOC_ID).get();
-      const data = res && res.data && res.data.length ? res.data[0] : null;
-
-      if(data && Array.isArray(data.dishes)){
-        state.dishes = data.dishes.map(shallowDish);
-      } else {
-        // 如果云端没初始化，就显示默认菜（不自动写入，避免权限问题）
-        state.dishes = defaultDishes.slice();
+  // 带重试（国内网络抖动时更稳）
+  async function fetchWithRetry(times=3){
+    let lastErr = null;
+    for(let i=0;i<times;i++){
+      try{
+        const res = await fetchOnce();
+        return res;
+      } catch(e){
+        lastErr = e;
+        await new Promise(r => setTimeout(r, 500 * (i+1)));
       }
-
-      $("dishCount").textContent = "菜品：" + state.dishes.length;
-      renderCats(); renderMenu(); renderToday();
-
-      if(!quiet) setStatus("已从云端同步。");
-    } catch(e){
-      console.error(e);
-      setStatus("云端读取失败：请检查 CloudBase 集合权限/网络。");
     }
+    throw lastErr;
   }
 
-  async function writeToCloud(dishes){
-    // 把写入数据严格变成“纯 JSON”
-    const safe = (dishes || []).map(shallowDish);
-
-    // 关键：必须是 dishes: []，不能是对象/字符串
-    // update 如果文档不存在会报错，所以先 try update，不行就 set
-    try{
-      await col.doc(DOC_ID).update({
-        dishes: safe,
-        updatedAt: Date.now()
-      });
-    } catch(e){
-      // 如果 update 失败（可能是 doc 不存在），尝试 set
-      await col.doc(DOC_ID).set({
-        dishes: safe,
-        updatedAt: Date.now()
-      });
-    }
+  async function saveToCloud(dishes){
+    // 再次严格 normalize，避免 nested entity
+    const safe = (dishes || []).map(normalizeDish).filter(d => d.name);
+    await setDoc(menuRef, { dishes: safe, updatedAt: Date.now() }, { merge: true });
+    return safe;
   }
 
-  function startWatchOrPolling(){
-    // 先清理
-    if(watcher && watcher.close) try{ watcher.close(); } catch {}
-    watcher = null;
-    if(pollingTimer) clearInterval(pollingTimer);
-
-    // CloudBase watch：有些版本/环境可能不支持
-    try{
-      watcher = col.where({ _id: DOC_ID }).watch({
-        onChange: (snap) => {
-          // snap.docs 是匹配到的文档数组
-          const doc = (snap.docs && snap.docs[0]) ? snap.docs[0] : null;
-          if(doc && Array.isArray(doc.dishes)){
-            state.dishes = doc.dishes.map(shallowDish);
-          } else {
-            state.dishes = defaultDishes.slice();
-          }
-          $("dishCount").textContent = "菜品：" + state.dishes.length;
-          renderCats(); renderMenu(); renderToday();
-        },
-        onError: (err) => {
-          console.warn("watch error, fallback to polling", err);
-          watcher = null;
-          pollingTimer = setInterval(() => refreshFromCloud(true), 5000);
-        }
-      });
-      setStatus("实时同步已开启。");
-    } catch(e){
-      console.warn("watch not supported, fallback to polling", e);
-      pollingTimer = setInterval(() => refreshFromCloud(true), 5000);
-      setStatus("实时监听不可用，已启用 5 秒轮询同步。");
-    }
+  function startRealtime(){
+    onSnapshot(menuRef, (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      if(data && Array.isArray(data.dishes)){
+        applyDishes(data.dishes, "");
+      } else {
+        // 云端空：先显示默认（不自动写入）
+        applyDishes(defaultDishes, "云端还没初始化菜单，先显示示例菜。管理员可保存后同步。");
+      }
+    }, (err) => {
+      console.warn("onSnapshot error:", err);
+      setTip("实时同步失败（网络不稳定）。你可以点右上角“同步刷新”。");
+    });
   }
 
-  /***************
-   * 6) 管理功能（写云端）
-   ***************/
+  /*********************
+   * 6) 管理操作（写云端）
+   *********************/
   async function addDish(){
     if(!isAdmin()){
-      setStatus("需要管理员登录才能添加。");
+      setTip("需要管理员登录才能添加。");
       return;
     }
 
     const name = $("name").value.trim();
-    if(!name){ setStatus("请先填写菜名。"); return; }
+    if(!name){ setTip("请先填写菜名。"); return; }
 
     const cat = ($("cat").value.trim() || "未分类");
     const desc = $("desc").value.trim();
     const priceRaw = $("price").value.trim();
-    const price = priceRaw ? Number(priceRaw) : NaN;
+    const price = priceRaw ? Number(priceRaw) : null;
 
     const file = $("img").files && $("img").files[0] ? $("img").files[0] : null;
     let imgData = null;
     if(file){
-      // 压缩后再存（更稳）
       imgData = await fileToDataUrlCompressed(file, 900, 0.78);
     }
 
-    const dish = shallowDish({
-      id: uid(),
-      name, cat, desc,
-      price: Number.isFinite(price) ? price : null,
-      imgData
-    });
-
-    const next = [...state.dishes, dish].map(shallowDish);
+    const dish = normalizeDish({ id: uid(), name, cat, desc, price, imgData });
+    const next = [...state.dishes, dish].map(normalizeDish);
 
     try{
-      await writeToCloud(next);
-      state.dishes = next;
-      $("dishCount").textContent = "菜品：" + state.dishes.length;
-      renderCats(); renderMenu();
+      const saved = await saveToCloud(next);
+      applyDishes(saved, "已保存菜品（云端同步）。");
       resetForm();
-      setStatus("已保存菜品（云端同步）。");
     } catch(e){
       console.error(e);
-      setStatus("保存失败：请检查集合权限是否允许网页写入。");
+      setTip("保存失败：请检查 Firestore Rules 是否允许写入。");
     }
   }
 
   async function deleteDish(id){
     if(!isAdmin()) return;
-    const next = state.dishes.filter(d => d.id !== id).map(shallowDish);
+    const next = state.dishes.filter(d => d.id !== id).map(normalizeDish);
 
     try{
-      await writeToCloud(next);
-      state.dishes = next;
+      const saved = await saveToCloud(next);
       state.today.delete(id);
       saveLocal(LS_TODAY, Object.fromEntries(state.today));
-      $("dishCount").textContent = "菜品：" + state.dishes.length;
-      renderCats(); renderMenu(); renderToday();
-      setStatus("已删除菜品（云端同步）。");
+      applyDishes(saved, "已删除菜品（云端同步）。");
     } catch(e){
       console.error(e);
-      setStatus("删除失败：请检查集合权限。");
+      setTip("删除失败：请检查 Firestore Rules。");
     }
   }
 
   async function seed(){
     if(!isAdmin()) return;
-    const next = [...state.dishes, ...defaultDishes].map(shallowDish);
+    const next = [...state.dishes, ...defaultDishes].map(normalizeDish);
     try{
-      await writeToCloud(next);
-      state.dishes = next;
-      $("dishCount").textContent = "菜品：" + state.dishes.length;
-      renderCats(); renderMenu();
-      setStatus("已添加示例菜（云端同步）。");
+      const saved = await saveToCloud(next);
+      applyDishes(saved, "已添加示例菜（云端同步）。");
     } catch(e){
       console.error(e);
-      setStatus("添加示例失败：请检查集合权限。");
+      setTip("添加示例失败：请检查 Firestore Rules。");
     }
   }
 
   async function wipeAll(){
     if(!isAdmin()) return;
     try{
-      await writeToCloud([]);
-      state.dishes = [];
-      $("dishCount").textContent = "菜品：0";
-      renderCats(); renderMenu(); renderToday();
-      setStatus("已清空全部菜品（云端同步）。");
+      const saved = await saveToCloud([]);
+      applyDishes(saved, "已清空全部菜品（云端同步）。");
     } catch(e){
       console.error(e);
-      setStatus("清空失败：请检查集合权限。");
+      setTip("清空失败：请检查 Firestore Rules。");
     }
   }
 
@@ -650,22 +601,20 @@
     }
   }
 
-  /***************
-   * 7) 管理员密码 UI
-   ***************/
+  /*********************
+   * 7) 管理员弹窗
+   *********************/
   function openPwd(){
     $("pwd").value = "";
     $("pwdTip").textContent = "";
     $("mask").classList.remove("hide");
     $("pwd").focus();
   }
-  function closePwd(){
-    $("mask").classList.add("hide");
-  }
+  function closePwd(){ $("mask").classList.add("hide"); }
 
-  /***************
+  /*********************
    * 8) 事件绑定
-   ***************/
+   *********************/
   $("addBtn").onclick = addDish;
   $("resetBtn").onclick = resetForm;
   $("seedBtn").onclick = seed;
@@ -679,7 +628,7 @@
   });
 
   $("unlockBtn").onclick = openPwd;
-  $("lockBtn").onclick = () => { setAdmin(false); };
+  $("lockBtn").onclick = () => setAdmin(false);
 
   $("cancelPwd").onclick = closePwd;
   $("okPwd").onclick = () => {
@@ -691,21 +640,47 @@
       $("pwdTip").textContent = "密码不正确。";
     }
   };
-  $("mask").addEventListener("click", (e) => {
-    if(e.target === $("mask")) closePwd();
-  });
+  $("mask").addEventListener("click", (e) => { if(e.target === $("mask")) closePwd(); });
 
-  $("forceRefreshBtn").onclick = () => refreshFromCloud(false);
+  $("forceRefreshBtn").onclick = async () => {
+    try{
+      setTip("正在同步云端...");
+      const dishes = await fetchWithRetry(3);
+      if(dishes) applyDishes(dishes, "已从云端同步。");
+      else applyDishes(defaultDishes, "云端为空，先显示示例菜。");
+    } catch(e){
+      console.error(e);
+      setTip("同步失败：网络不稳定。建议换网络或稍后再试。");
+    }
+  };
 
-  /***************
-   * 9) 启动
-   ***************/
-  setAdmin(isAdmin());                 // 读 sessionStorage
-  state.dishes = defaultDishes.slice(); // 先显示默认，等云端回来会覆盖
-  $("dishCount").textContent = "菜品：" + state.dishes.length;
-  renderCats(); renderMenu(); renderToday();
+  /*********************
+   * 9) 启动：先读缓存 → 再连云端 → 开实时
+   *********************/
+  setAdmin(isAdmin());
 
-  initCloudBase();
+  // 先用缓存/默认渲染，避免手机打开白屏/没菜
+  const cached = loadLocal(LS_CACHED_MENU, null);
+  if(cached && Array.isArray(cached.dishes) && cached.dishes.length){
+    applyDishes(cached.dishes, "已加载本地缓存菜单（云端同步中…）");
+  } else {
+    applyDishes(defaultDishes, "正在连接云端…");
+  }
+
+  // 然后尝试拉云端一次
+  (async () => {
+    try{
+      const dishes = await fetchWithRetry(3);
+      if(dishes) applyDishes(dishes, "");
+      else applyDishes(defaultDishes, "云端还没初始化菜单，先显示示例菜。");
+    } catch(e){
+      console.warn("initial fetch fail:", e);
+      setTip("云端连接失败：已显示本地缓存/示例菜。可点右上角“同步刷新”。");
+    }
+  })();
+
+  // 开启实时监听（能连上就实时同步）
+  startRealtime();
 </script>
 </body>
 </html>
